@@ -39,7 +39,10 @@ def analyze(text: str) -> dict:
             temperature=0.2,
         ),
     )
-    return resp.parsed.model_dump()
+    result = resp.parsed.model_dump()
+    if result["verdict"] == "unverifiable":
+        result["confidence"] = "low"
+    return result
 
 if __name__ == "__main__":
     tests = [
