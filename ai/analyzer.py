@@ -1,7 +1,8 @@
-import os, json, time 
+import os, json, time, random
 from typing import Literal, Optional
 from dotenv import load_dotenv
 from google import genai
+from google.genai import errors
 from google.genai import types
 from pydantic import BaseModel
 
@@ -29,17 +30,41 @@ Rules:
 - If the verdict is "unverifiable", confidence must be "low".
 - Detect the language of the user's text. Set language to its ISO 639-1 code, and write explanation and recommendation in that same language. Never switch languages. English text gets "en" and an English reply."""
 
+MAX_CHARS = 5000
+
+def error(code: str, message: str) -> dict:
+    return {"error": message, "code": code}
+
 def analyze(text: str) -> dict:
-    resp = client.models.generate_content(
-        model=MODEL,
-        contents=text,
-        config=types.GenerateContentConfig(
-            system_instruction=SYSTEM,
-            response_mime_type="application/json",
-            response_schema=Result,
-            temperature=0.2,
-        ),
-    )
+    if not text or not text.strip():
+        return error("BAD_INPUT", "Text is empty.")
+    if len(text) > MAX_CHARS:
+        return error("BAD_INPUT", "Text is too long.")
+
+    for attempt in range(3):
+        try:
+            resp = client.models.generate_content(
+                model=MODEL,
+                contents=text,
+                config=types.GenerateContentConfig(
+                    system_instruction=SYSTEM,
+                    response_mime_type="application/json",
+                    response_schema=Result,
+                    temperature=0.2,
+                ),
+            )
+            break
+        except errors.APIError as e:
+            if e.code == 429:
+                return error("RATE_LIMIT", "Too many requests. Try again later.")
+            if e.code == 503 and attempt < 2:
+                time.sleep(2 ** attempt + random.random())
+                continue
+            return error("AI_FAILURE", "AI service unavailable.")
+
+    if resp.parsed is None:
+        return error("AI_FAILURE", "AI returned an invalid response.")
+
     result = resp.parsed.model_dump()
     if result["verdict"] == "unverifiable":
         result["confidence"] = "low"
@@ -59,8 +84,11 @@ if __name__ == "__main__":
         print(repr(t[:50]), "->")
         try:
             r = analyze(t)
-            print(r["verdict"], "|", r["confidence"], "|", r["language"])
-            print(r["explanation"], "\n")
+            if "error" in r:
+                print("ERROR:", r["code"], "-", r["error"], "\n")
+            else:
+                print(r["verdict"], "|", r["confidence"], "|", r["language"])
+                print(r["explanation"], "\n")
         except Exception as e:
             print("CRASH:", e, "\n")
         time.sleep(13)
