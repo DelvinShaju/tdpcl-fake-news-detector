@@ -6,11 +6,14 @@ then open http://127.0.0.1:8000
 
 What this file does:
 - serves the website (static/index.html, plus everything in static/)
-- POST /api/analyze-text and POST /api/analyze-image, following docs/api_contract.md
+- POST /api/analyze-text and POST /api/analyze-image (see docs/api_contract.md)
 - checks input before it reaches the AI, so bad input never costs a Gemini call
 - limits each visitor to a few checks per minute (no logins, so this protects our quota)
-- turns every failure into the contract's error shape, with a proper HTTP status
-- checks the AI's answer matches the contract before sending it to the page
+- checks the AI's answer is complete and valid
+- TRANSLATES between the two formats in docs/api_contract.md:
+    ai/analyzer.py answers in the "AI format"  (likely_real / red_flags / ...)
+    the website reads the "website format"     (likely_legitimate / indicators / ...)
+  so each side can keep its own names and only this file needs to know both.
 """
 import logging
 from pathlib import Path
@@ -33,7 +36,7 @@ STATIC_DIR = ROOT / "static"
 # ---------------------------------------------------------------------------
 # The analyser (ai/analyzer.py). If it can't load (most often: GEMINI_API_KEY
 # missing from .env), the server still starts, so the website loads, and the
-# API answers AI_FAILURE with the reason in the server log.
+# API answers AI_FAILED with the reason in the server log.
 # ---------------------------------------------------------------------------
 try:
     import ai.analyzer as analyzer
@@ -44,20 +47,86 @@ except Exception as e:  # noqa: BLE001 - any import failure should be reported, 
     log.error("Could not load ai/analyzer.py: %s", ANALYZER_STATUS)
 
 # ---------------------------------------------------------------------------
-# Limits and allowed values (from docs/api_contract.md)
+# Limits
 # ---------------------------------------------------------------------------
 MAX_TEXT_CHARS = 5000
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 RATE_LIMIT = "10/minute;100/day"   # per visitor (IP address)
 
-VERDICTS = {"likely_real", "likely_fake", "misleading", "unverifiable"}
+# ---------------------------------------------------------------------------
+# AI format -> website format
+# ---------------------------------------------------------------------------
+AI_VERDICTS = {"likely_real", "likely_fake", "misleading", "unverifiable"}
 CONFIDENCES = {"high", "medium", "low"}
 
-# Which HTTP status goes with each contract error code
-STATUS_FOR_CODE = {"BAD_INPUT": 400, "FILE_TOO_LARGE": 413, "RATE_LIMIT": 429, "AI_FAILURE": 502}
+VERDICT_FOR_WEBSITE = {
+    "likely_real": "likely_legitimate",
+    "likely_fake": "suspicious",
+    "misleading": "suspicious",          # partly true but distorted: still a warning
+    "unverifiable": "needs_verification",
+}
+
+# Website error codes and their HTTP status
+STATUS_FOR_CODE = {
+    "EMPTY_INPUT": 400,
+    "TEXT_TOO_LONG": 400,
+    "BAD_FILE_TYPE": 400,
+    "FILE_TOO_LARGE": 413,
+    "NO_TEXT_FOUND": 422,
+    "RATE_LIMITED": 429,
+    "AI_FAILED": 502,
+}
+
+# Error codes the analyser may return, translated to website codes
+ERROR_FOR_WEBSITE = {
+    "BAD_INPUT": "EMPTY_INPUT",
+    "FILE_TOO_LARGE": "FILE_TOO_LARGE",
+    "RATE_LIMIT": "RATE_LIMITED",
+    "AI_FAILURE": "AI_FAILED",
+}
 
 # The first bytes of a file reveal its real type, whatever its name says.
-IMAGE_SIGNATURES = {b"\x89PNG\r\n\x1a\n": "image/png", b"\xff\xd8\xff": "image/jpeg"}
+def detect_image_type(data: bytes):
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+def is_valid_ai_result(r) -> bool:
+    """True if the analyser's answer is complete and uses the allowed values (AI format)."""
+    return (
+        isinstance(r, dict)
+        and r.get("verdict") in AI_VERDICTS
+        and r.get("confidence") in CONFIDENCES
+        and isinstance(r.get("red_flags"), list)
+        and all(isinstance(flag, str) for flag in r["red_flags"])
+        and isinstance(r.get("explanation"), str) and r["explanation"].strip() != ""
+        and isinstance(r.get("recommendation"), str)
+        and (r.get("extracted_text") is None or isinstance(r.get("extracted_text"), str))
+        and isinstance(r.get("language"), str) and r["language"] != ""
+    )
+
+
+def to_website_format(r: dict) -> dict:
+    """Converts an analyser result (AI format) into what the website reads."""
+    explanation = r["explanation"].strip()
+    recommendation = r["recommendation"].strip()
+    if recommendation:
+        # The page has no separate recommendation box, so it goes after the explanation.
+        explanation = f"{explanation} {recommendation}"
+    return {
+        "verdict": VERDICT_FOR_WEBSITE[r["verdict"]],
+        "confidence": r["confidence"],
+        "indicators": [flag for flag in r["red_flags"] if flag.strip()],
+        "explanation": explanation,
+        "extracted_text": r.get("extracted_text"),
+        "language": r["language"],
+    }
+
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -78,59 +147,44 @@ def error(code: str, message: str, status: int | None = None) -> JSONResponse:
     return JSONResponse({"error": message, "code": code}, status_code=status or STATUS_FOR_CODE[code])
 
 
-def is_valid_result(r) -> bool:
-    """True if the analyser's answer matches the success format in the contract."""
-    return (
-        isinstance(r, dict)
-        and r.get("verdict") in VERDICTS
-        and r.get("confidence") in CONFIDENCES
-        and isinstance(r.get("red_flags"), list)
-        and all(isinstance(flag, str) for flag in r["red_flags"])
-        and isinstance(r.get("explanation"), str) and r["explanation"].strip() != ""
-        and isinstance(r.get("recommendation"), str)
-        and (r.get("extracted_text") is None or isinstance(r.get("extracted_text"), str))
-        and isinstance(r.get("language"), str) and r["language"] != ""
-    )
-
-
 def run_analyser(function_name: str, *args) -> JSONResponse | dict:
-    """Calls ai/analyzer.py and turns every kind of failure into the contract's error shape."""
+    """Calls ai/analyzer.py and returns either a website-format result or an error response."""
     function = getattr(analyzer, function_name, None)
     if function is None:
         if analyzer is None:
             log.error("Analyser unavailable: %s", ANALYZER_STATUS)
-            return error("AI_FAILURE", "The checker isn't available right now. Please try again later.", 503)
-        return error("AI_FAILURE", "Screenshot checking isn't available yet. Please paste the text instead.", 501)
+            return error("AI_FAILED", "The checker isn't available right now. Please try again later.", 503)
+        return error("AI_FAILED", "Screenshot checking isn't available yet. Please paste the text instead.", 501)
 
     try:
         result = function(*args)
     except Exception:  # noqa: BLE001
         log.exception("Analyser raised an error")
-        return error("AI_FAILURE", "Something went wrong while checking. Please try again.")
+        return error("AI_FAILED", "Something went wrong while checking. Please try again.")
 
     # The analyser reports some problems itself, as {"error": ..., "code": ...}
     if isinstance(result, dict) and "error" in result:
-        code = result.get("code") if result.get("code") in STATUS_FOR_CODE else "AI_FAILURE"
+        code = ERROR_FOR_WEBSITE.get(result.get("code"), "AI_FAILED")
         return error(code, str(result["error"]))
 
-    if not is_valid_result(result):
-        log.error("Analyser returned a result that doesn't match the contract: %r", result)
-        return error("AI_FAILURE", "Something went wrong while checking. Please try again.")
-    return dict(result)
+    if not is_valid_ai_result(result):
+        log.error("Analyser returned an incomplete or invalid result: %r", result)
+        return error("AI_FAILED", "Something went wrong while checking. Please try again.")
+    return to_website_format(result)
 
 
 # ---------------------------------------------------------------------------
-# Error handlers: make FastAPI's built-in errors use our contract shape
+# Error handlers: make FastAPI's built-in errors use our error shape
 # ---------------------------------------------------------------------------
 @app.exception_handler(RequestValidationError)
 async def bad_request(request: Request, exc: RequestValidationError):
-    # Missing "text", wrong type, not JSON, missing "file", ... all count as BAD_INPUT.
-    return error("BAD_INPUT", "The request was missing something or wasn't in the right format.")
+    # Missing "text", wrong type, not JSON, ... : nothing usable was sent.
+    return error("EMPTY_INPUT", "Please paste a message or choose a screenshot first.")
 
 
 @app.exception_handler(RateLimitExceeded)
 async def rate_limited(request: Request, exc: RateLimitExceeded):
-    return error("RATE_LIMIT", "Too many checks too quickly. Please wait a minute and try again.")
+    return error("RATE_LIMITED", "Too many checks too quickly. Please wait a minute and try again.")
 
 
 # ---------------------------------------------------------------------------
@@ -145,31 +199,40 @@ class TextRequest(BaseModel):
 def analyze_text(request: Request, body: TextRequest):
     text = body.text.strip()
     if not text:
-        return error("BAD_INPUT", "Please paste a message first.")
+        return error("EMPTY_INPUT", "Please paste a message first.")
     if len(text) > MAX_TEXT_CHARS:
-        return error("BAD_INPUT", f"Please paste up to {MAX_TEXT_CHARS:,} characters.")
+        return error("TEXT_TOO_LONG", f"Please paste up to {MAX_TEXT_CHARS:,} characters.")
 
     result = run_analyser("analyze", text)
     if isinstance(result, JSONResponse):
         return result
-    result["extracted_text"] = None   # contract: extracted_text is for images only
+    result["extracted_text"] = None   # extracted_text is only for screenshots
     return result
 
 
 @app.post("/api/analyze-image")
 @limiter.limit(RATE_LIMIT)
-def analyze_image(request: Request, file: UploadFile = File(...)):
-    image_bytes = file.file.read(MAX_IMAGE_BYTES + 1)   # read one byte past the limit to detect "too big"
+def analyze_image(request: Request, image: UploadFile | None = File(None), file: UploadFile | None = File(None)):
+    upload = image or file   # the website sends "image"; "file" also accepted
+    if upload is None:
+        return error("EMPTY_INPUT", "Please choose a screenshot first.")
+
+    image_bytes = upload.file.read(MAX_IMAGE_BYTES + 1)   # one byte past the limit detects "too big"
     if len(image_bytes) > MAX_IMAGE_BYTES:
         return error("FILE_TOO_LARGE", "That image is too large. Please use one under 5 MB.")
     if not image_bytes:
-        return error("BAD_INPUT", "Please choose a screenshot first.")
+        return error("EMPTY_INPUT", "Please choose a screenshot first.")
 
-    mime_type = next((m for sig, m in IMAGE_SIGNATURES.items() if image_bytes.startswith(sig)), None)
+    mime_type = detect_image_type(image_bytes)
     if mime_type is None:
-        return error("BAD_INPUT", "Please upload a JPG or PNG image.")
+        return error("BAD_FILE_TYPE", "Please upload a JPG, PNG or WEBP image.")
 
-    return run_analyser("analyze_image", image_bytes, mime_type)
+    result = run_analyser("analyze_image", image_bytes, mime_type)
+    if isinstance(result, JSONResponse):
+        return result
+    if not (result.get("extracted_text") or "").strip():
+        return error("NO_TEXT_FOUND", "We couldn't find any text in that image.")
+    return result
 
 
 @app.get("/api/health")

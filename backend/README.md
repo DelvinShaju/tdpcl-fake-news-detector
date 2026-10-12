@@ -1,6 +1,6 @@
 # Backend
 
-FastAPI server for TruthLens. Follows `docs/api_contract.md`.
+FastAPI server for TruthLens. Follows `docs/api_contract.md` (v2).
 
 ## Run it
 
@@ -12,35 +12,35 @@ uvicorn backend.main:app --reload
 ```
 
 Open http://127.0.0.1:8000. `GET /api/health` shows whether the analyser loaded and whether it's in mock mode.
-
-Needs `GEMINI_API_KEY` in `.env`. To build the frontend without using Gemini, also set `USE_MOCK=true` in `.env`.
-(`ai/analyzer.py` still needs some key to start, even in mock mode; any placeholder works for mock.)
-
 Interactive API docs: http://127.0.0.1:8000/docs
 
-## How it uses the analyser
+Needs `GEMINI_API_KEY` in `.env`. To try the website without using Gemini, also set `USE_MOCK=true` in `.env`
+(`ai/analyzer.py` still needs some key to start, even in mock mode; any placeholder works for mock).
+The page has its own `USE_MOCK` at the top of `static/script.js`: set it to `false` to make the page call this server.
 
-| Endpoint | Calls in `ai/analyzer.py` |
-|---|---|
-| `POST /api/analyze-text` | `analyze(text)` |
-| `POST /api/analyze-image` | `analyze_image(image_bytes, mime_type)`, with `mime_type` either `"image/png"` or `"image/jpeg"` |
+## What it does
 
-Until `analyze_image` exists, the image endpoint answers `AI_FAILURE` (HTTP 501) with "Screenshot checking isn't available yet".
+- Serves the website: `/` → `static/index.html`, `/static/...` for CSS and JS.
+- `POST /api/analyze-text` → calls `analyze(text)` in `ai/analyzer.py`.
+- `POST /api/analyze-image` → calls `analyze_image(image_bytes, mime_type)`. Until that function exists,
+  it answers `AI_FAILED` (HTTP 501).
+- **Translates** the AI's answer into the website's format (see section 3 of the contract), so neither side
+  has to rename anything. All the translation lives in `to_website_format()` and the tables above it.
+- Checks the AI's answer is complete and uses allowed values before converting it; anything else becomes `AI_FAILED`.
 
-## What the server checks
+## Input checks (before the AI is called)
 
 | Situation | Response |
 |---|---|
-| Missing/empty text, over 5,000 characters, or not JSON | `BAD_INPUT` (400) |
-| No file, wrong field name (must be `file`), empty, or not a real JPG/PNG | `BAD_INPUT` (400) |
+| Missing or empty text, not JSON | `EMPTY_INPUT` (400) |
+| Text over 5,000 characters | `TEXT_TOO_LONG` (400) |
+| No image, or empty file | `EMPTY_INPUT` (400) |
+| Not really a JPG/PNG/WEBP (checked from the file's contents, not its name) | `BAD_FILE_TYPE` (400) |
 | Image over 5 MB | `FILE_TOO_LARGE` (413) |
-| More than 10 checks a minute or 100 a day from one visitor | `RATE_LIMIT` (429) |
-| Gemini's own rate limit (reported by the analyser) | `RATE_LIMIT` (429) |
-| Analyser crashes, returns `AI_FAILURE`, or returns something not matching the contract | `AI_FAILURE` (502) |
-| Analyser couldn't load (e.g. no API key) | `AI_FAILURE` (503) |
+| More than 10 checks a minute or 100 a day from one visitor | `RATE_LIMITED` (429) |
 
-Bad input is rejected before it reaches the analyser, so it never costs a Gemini call.
-The image type is checked from the file's contents, not its name.
+After the AI: a screenshot with no readable text gives `NO_TEXT_FOUND` (422); AI errors, crashes or invalid
+answers give `AI_FAILED`.
 
 ## Tests
 
@@ -48,7 +48,8 @@ The image type is checked from the file's contents, not its name.
 python -m pytest backend
 ```
 
-The tests replace the analyser with a fake, so they never call Gemini and work offline.
+The tests replace the analyser with a fake, so they never call Gemini and work offline. One test also
+checks that every error code and verdict the backend can send has a matching label in `static/script.js`.
 
 ## Online (Render)
 
