@@ -1,4 +1,4 @@
-import os, json, time, random
+import os, json, time, random, hashlib
 from typing import Literal, Optional
 from dotenv import load_dotenv
 from google import genai
@@ -35,12 +35,16 @@ MAX_CHARS = 5000
 def error(code: str, message: str) -> dict:
     return {"error": message, "code": code}
 
+cache = {}
+
 def analyze(text: str) -> dict:
     if not text or not text.strip():
         return error("BAD_INPUT", "Text is empty.")
     if len(text) > MAX_CHARS:
         return error("BAD_INPUT", "Text is too long.")
-
+    key = hashlib.sha256(text.strip().encode()).hexdigest()
+    if key in cache:
+        return cache[key]
     for attempt in range(3):
         try:
             resp = client.models.generate_content(
@@ -68,6 +72,7 @@ def analyze(text: str) -> dict:
     result = resp.parsed.model_dump()
     if result["verdict"] == "unverifiable":
         result["confidence"] = "low"
+    cache[key] = result
     return result
 
 if __name__ == "__main__":
@@ -79,6 +84,7 @@ if __name__ == "__main__":
         "बधाई हो! आपने ₹25 लाख की लॉटरी जीती है। अभी इस लिंक पर क्लिक करें।",
         "അഭിനന്ദനങ്ങൾ! നിങ്ങൾ 25 ലക്ഷം രൂപ നേടി. ഇവിടെ ക്ലിക്ക് ചെയ്യുക.",
         "Houthis warn airlines and passengers not to use Saudi Arabian airports after deadly Riyadh attack",
+        "Your SBI account will be blocked. Update KYC now: http://sbi-kyc-update.xyz",
     ]
     for t in tests:
         print(repr(t[:50]), "->")
