@@ -37,11 +37,25 @@ def error(code: str, message: str) -> dict:
 
 cache = {}
 
+USE_MOCK = os.getenv("USE_MOCK", "false").lower() == "true"
+
+MOCK_RESULT = {
+    "verdict": "likely_fake",
+    "confidence": "high",
+    "red_flags": ["Mock red flag one", "Mock red flag two"],
+    "explanation": "This is a mock response for UI development.",
+    "recommendation": "This is a mock recommendation.",
+    "extracted_text": None,
+    "language": "en",
+}
+
 def analyze(text: str) -> dict:
     if not text or not text.strip():
         return error("BAD_INPUT", "Text is empty.")
     if len(text) > MAX_CHARS:
         return error("BAD_INPUT", "Text is too long.")
+    if USE_MOCK:
+        return MOCK_RESULT
     key = hashlib.sha256(text.strip().encode()).hexdigest()
     if key in cache:
         return cache[key]
