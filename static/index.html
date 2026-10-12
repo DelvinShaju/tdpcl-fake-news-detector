@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f6f8fb">
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0c111d">
+  <meta name="description"
+    content="TruthLens - Advisory fake news and scam checker for WhatsApp forwards, SMS, and screenshot messages in English, Hindi, and Kannada.">
+  <title>TruthLens — Advisory Message Checker</title>
+  <link rel="icon" type="image/svg+xml"
+    href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath fill='%231d4ed8' d='M16 2L4 7v9c0 8.3 5.1 14.8 12 16 6.9-1.2 12-7.7 12-16V7L16 2z'/%3E%3Cpath fill='%23ffffff' d='M14.5 19.5l-4-4 1.4-1.4 2.6 2.6 6.6-6.6 1.4 1.4z'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Noto+Sans+Devanagari:wght@400;500;600;700&family=Noto+Sans+Kannada:wght@400;500;600;700&family=Noto+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+
+<body>
+  <a href="#main" class="skip-link" data-i18n="skipToContent">Skip to main content</a>
+
+  <noscript>
+    <div class="noscript-banner" role="alert">
+      <p>TruthLens requires JavaScript to check messages and screenshots. Please enable JavaScript in your browser
+        settings to continue.</p>
+    </div>
+  </noscript>
+
+  <header class="app-header">
+    <div class="app-header__container">
+      <div class="brand">
+        <svg class="brand__logo" width="36" height="36" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+          <path d="M16 2L4 7v9c0 8.3 5.1 14.8 12 16 6.9-1.2 12-7.7 12-16V7L16 2z" fill="var(--color-brand)" />
+          <path d="M14.5 19.5l-4-4 1.4-1.4 2.6 2.6 6.6-6.6 1.4 1.4z" fill="#ffffff" />
+        </svg>
+        <div class="brand__text">
+          <h1 class="brand__title">TruthLens</h1>
+        </div>
+      </div>
+
+      <nav class="lang-nav" aria-label="Language selection">
+        <div class="lang-switcher" role="group" aria-label="Language selection" data-i18n-aria-label="langAriaLabel">
+          <button type="button" class="lang-btn is-active" data-lang="en" aria-pressed="true">English</button>
+          <button type="button" class="lang-btn" data-lang="hi" aria-pressed="false">हिन्दी</button>
+          <button type="button" class="lang-btn" data-lang="kn" aria-pressed="false">ಕನ್ನಡ</button>
+        </div>
+      </nav>
+    </div>
+    <p class="app-tagline" data-i18n="tagline">Check suspicious forwards, posts and SMS messages before sharing.</p>
+  </header>
+
+  <main id="main" class="app-main">
+    <div class="privacy-banner" role="note">
+      <svg class="privacy-banner__icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+        stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+        <path d="M9 12l2 2 4-4" />
+      </svg>
+      <span class="privacy-banner__text" data-i18n="privacyNotice">Your message is checked and not saved.</span>
+    </div>
+
+    <section class="card checker-card" aria-label="Message checker">
+      <div role="tablist" class="tablist" aria-label="Input mode">
+        <button role="tab" id="tab-text" aria-selected="true" aria-controls="panel-text" tabindex="0"
+          class="tablist__tab is-active" data-i18n="tabText">Paste text</button>
+        <button role="tab" id="tab-image" aria-selected="false" aria-controls="panel-image" tabindex="-1"
+          class="tablist__tab" data-i18n="tabImage">Upload screenshot</button>
+      </div>
+
+      <div class="tab-panels">
+        <!-- Text Input Mode -->
+        <div role="tabpanel" id="panel-text" aria-labelledby="tab-text" class="tab-panel">
+          <form id="textForm" novalidate>
+            <div class="form-group">
+              <label for="textInput" class="form-label" data-i18n="textLabel">Suspicious message text</label>
+              <textarea id="textInput" maxlength="5000" rows="6" class="form-textarea"
+                placeholder="Paste the WhatsApp forward, SMS, or social media post here…"
+                data-i18n-placeholder="textPlaceholder" aria-describedby="charCounter"></textarea>
+              <div class="form-helper">
+                <span id="charCounter" class="char-counter" aria-hidden="true">0 / 5,000</span>
+                <span id="charAnnouncer" class="sr-only" aria-live="polite"></span>
+              </div>
+            </div>
+            <button type="submit" id="checkTextBtn" class="btn btn--primary" data-i18n="checkTextBtn">Check
+              text</button>
+          </form>
+        </div>
+
+        <!-- Image Input Mode -->
+        <div role="tabpanel" id="panel-image" aria-labelledby="tab-image" class="tab-panel" hidden>
+          <form id="imageForm" novalidate>
+            <div class="form-group">
+              <label id="imageLabel" class="form-label" data-i18n="imageLabel">Upload screenshot of message</label>
+              <div id="dropzone" class="dropzone" tabindex="0" role="button"
+                aria-labelledby="imageLabel dropzonePrompt dropzoneHint">
+                <input type="file" id="imageInput" accept="image/png, image/jpeg, image/webp" class="file-input">
+                <div id="dropzoneContent" class="dropzone__content">
+                  <svg class="dropzone__icon" width="44" height="44" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                    aria-hidden="true">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="17 8 12 3 7 8" />
+                    <line x1="12" y1="3" x2="12" y2="15" />
+                  </svg>
+                  <p id="dropzonePrompt" class="dropzone__prompt" data-i18n="dropPrompt">Choose an image, drag &amp;
+                    drop, or paste from clipboard</p>
+                  <p id="dropzoneHint" class="dropzone__hint" data-i18n="dropHint">Supports JPG, PNG, WEBP up to 5 MB
+                  </p>
+                  <span class="btn btn--secondary dropzone__btn" data-i18n="browseBtn">Browse files</span>
+                </div>
+
+                <div id="previewContainer" class="preview-box" hidden>
+                  <img id="preview" alt="Screenshot preview" class="preview-box__img" hidden>
+                  <div class="preview-box__meta">
+                    <span id="previewName" class="preview-box__name"></span>
+                    <span id="previewSize" class="preview-box__size"></span>
+                  </div>
+                  <button type="button" id="removeImageBtn" class="btn btn--outline preview-box__remove"
+                    data-i18n="removeImage">Remove</button>
+                </div>
+              </div>
+            </div>
+            <button type="submit" id="checkImageBtn" class="btn btn--primary" data-i18n="checkImageBtn">Check
+              screenshot</button>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <!-- Loading State -->
+    <p id="loading" class="loading-status" hidden aria-live="polite">
+      <span class="loading-status__spinner" aria-hidden="true"></span>
+      <span id="loadingText" class="loading-status__text" data-i18n="loadingInitial">Checking…</span>
+    </p>
+
+    <!-- Result / Error Region -->
+    <div id="result" class="result" hidden role="region" aria-live="polite" aria-label="Assessment result"></div>
+  </main>
+
+  <footer class="app-footer">
+    <p class="app-footer__text">
+      <span class="app-footer__name">TruthLens</span> &mdash;
+      <span data-i18n="disclaimer">This is an AI assessment, not a final verdict. Check official sources before
+        forwarding.</span>
+    </p>
+  </footer>
+
+  <script src="/static/script.js" defer></script>
+</body>
+
+</html>
