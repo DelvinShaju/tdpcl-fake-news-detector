@@ -222,3 +222,6 @@ __marimo__/
 node_modules/
 .env
 dist/
+
+# macOS
+.DS_Store

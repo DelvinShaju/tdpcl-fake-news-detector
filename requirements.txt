@@ -1,0 +1,12 @@
+# Everything needed to run the whole project: pip install -r requirements.txt
+
+# AI (Gemini analyser, FastAPI, uvicorn)
+-r ai/requirements.txt
+
+# Backend
+slowapi            # rate limiting
+python-multipart   # needed by FastAPI for image uploads
+
+# Tests
+pytest
+httpx              # needed by FastAPI's test client
