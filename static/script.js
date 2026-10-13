@@ -14,7 +14,7 @@
    * Set to true to test UI states offline with sample responses.
    * Set to false for live backend API integration.
    */
-  const USE_MOCK = true;
+  const USE_MOCK = false;
 
   /**
    * Sample Mock Result
